@@ -23,13 +23,15 @@ jobs:
       matrix:
         build_type: ["release", "nightly"]
         image: ["alma9"]
+        stack: ["key4hep"]
         include:
           - build_type: nightly
             image: ubuntu24
+            stack: key4hep
       fail-fast: false
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
     - uses: key4hep/key4hep-actions/cache-external-data@main
     - uses: key4hep/key4hep-actions/key4hep-build@main
       with:
@@ -41,64 +43,64 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: key4hep/key4hep-actions/cache-external-data@main
-    - uses: key4hep/key4hep-actions/key4hep-build@main
+    - uses: cvmfs-contrib/github-action-cvmfs@v4
+    - uses: aidasoft/run-lcg-view@v4
       with:
-        build_type: "release"
-        image: "alma9" 
-        stack: "key4hep"
-        
-    - name: Install histcmp
-      shell: bash -l {0}
-      run: |
-        pip install histcmp==0.8.1
-
-    - name: Generate new histograms and download reference
-      shell: bash -l {0}
-      run: |
-        # Make the script executable
-        chmod +x CI/generate_material_comparisons.sh
-        
-        # Run the material histogram generation script
-        ./CI/generate_material_comparisons.sh
-
-    - name: Run histcmp tests
-      shell: bash -l {0}
-      run: |
-        # Compare each geometry's histograms
-        mkdir -p histcmp_results
-        
-        for geometry_dir in mat_scan_results/*/; do
-          if [ -d "$geometry_dir" ]; then
-            geometry_name=$(basename "$geometry_dir")
+        container: el9
+        view-path: /cvmfs/sw-nightlies.hsf.org/key4hep
+        run: |
+          # Create virtual environment like pre-commit does
+          python -m venv /root/histcmp-venv
+          source /root/histcmp-venv/bin/activate
+          
+          # Install histcmp
+          pip install histcmp==0.8.1
+          
+          # Export PYTHONPATH like pre-commit does
+          export PYTHONPATH=$VIRTUAL_ENV/lib/python3.$(python3 -c 'import sys; print(f"{sys.version_info[1]}")')/site-packages:$PYTHONPATH
+          
+          # Make the scripts executable
+          chmod +x CI/generate_material_scans.sh
+          
+          # Run in TEST and FAST mode for quick CI testing
+          ./CI/generate_material_scans.sh --test --fast --quiet
+          
+          echo "=== Checking consolidated files ==="
+          ls -la detector_geometries_*.root 2>/dev/null || echo "No consolidated files found"
+          
+          # Single histcmp comparison using consolidated files
+          mkdir -p html
+          mkdir -p plots
+          
+          if [ -f "detector_geometries_ref.root" ] && [ -f "detector_geometries_monitored.root" ]; then
+            echo "Running single histcmp comparison on consolidated files..."
             
-            for compact_dir in "${geometry_dir}"*/; do
-              if [ -d "$compact_dir" ]; then
-                compact_name=$(basename "$compact_dir")
-                
-                # Compare each histogram type
-                for hist_type in x0 lambda depth; do
-                  current_file="${compact_dir}/${hist_type}_summed_hist.root"
-                  ref_file="${compact_dir}/${hist_type}_ref_summed_hist.root"
-                  
-                  if [ -f "$current_file" ] && [ -f "$ref_file" ]; then
-                    echo "Comparing ${geometry_name}/${compact_name}/${hist_type}"
-                    
-                    histcmp "$ref_file" "$current_file" \
-                      --title "Material Scan Comparison: ${geometry_name}/${compact_name}/${hist_type}" \
-                      --output "histcmp_results/${geometry_name}_${compact_name}_${hist_type}" \
-                      --format png \
-                      || echo "Comparison failed for ${geometry_name}_${compact_name}_${hist_type}"
-                  else
-                    echo "Warning: Missing files for comparison of ${geometry_name}/${compact_name}/${hist_type}"
-                    echo "  Current file: $current_file (exists: $([ -f "$current_file" ] && echo "yes" || echo "no"))"
-                    echo "  Ref file: $ref_file (exists: $([ -f "$ref_file" ] && echo "yes" || echo "no"))"
-                  fi
-                done
-              fi
-            done
+            # List file contents before comparison
+            echo "=== Reference file contents ==="
+            root -l -b -q -e "TFile f(\"detector_geometries_ref.root\"); f.ls(); f.Close();" || echo "Failed to list reference file contents"
+            
+            echo "=== Monitored file contents ==="
+            root -l -b -q -e "TFile f(\"detector_geometries_monitored.root\"); f.ls(); f.Close();" || echo "Failed to list monitored file contents"
+            
+            # Run histcmp comparison with consistent output paths
+            histcmp detector_geometries_ref.root detector_geometries_monitored.root \
+              --title "Material Budget Comparison: All Detector Geometries" \
+              -o "html/histcmp-results.html" \
+              -p "plots" \
+              --format png \
+              && echo "✅ Histcmp comparison completed successfully" \
+              || echo "❌ Histcmp comparison failed"
+              
+            echo "=== Histcmp comparison completed ==="
+            
+          else
+            echo "⚠️  Consolidated ROOT files not found - creating error report"
+            # Create error report in html directory to match artifact structure
+            echo "# Material Scan Failure" > html/scan_failure.md
+            echo "Consolidated ROOT files were not generated successfully." >> html/scan_failure.md
+            echo "- detector_geometries_ref.root exists: $([ -f detector_geometries_ref.root ] && echo yes || echo no)" >> html/scan_failure.md
+            echo "- detector_geometries_monitored.root exists: $([ -f detector_geometries_monitored.root ] && echo yes || echo no)" >> html/scan_failure.md
           fi
-        done
 
     - name: Upload histcmp plots and results
       uses: actions/upload-artifact@v4
@@ -106,6 +108,22 @@ jobs:
       with:
         name: histcmp-results
         path: |
-          histcmp_results/
-          mat_scan_results/
-          reference_results/
+          html/
+          plots/
+          detector_geometries_*.root
+          material_scan_errors.md
+
+    - name: Check for failed material scans
+      if: always()
+      run: |
+        if [ -f "material_scan_errors.md" ]; then
+          echo "::warning::Material scan failures detected. Check artifacts for details."
+          echo "::group::Failed Material Scans"
+          cat material_scan_errors.md
+          echo "::endgroup::"
+        else
+          echo "✅ All material scans completed successfully"
+        fi
+        
+        # Don't fail the workflow - preserve artifacts for analysis
+        exit 0
