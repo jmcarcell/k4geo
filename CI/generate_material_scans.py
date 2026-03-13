@@ -259,10 +259,13 @@ def run_material_scan(xml_file, output_path, params, quiet):
 
 def run_material_plots(scan_output, output_dir, params):
     """Run material_plots.py to generate histograms. Returns True on success."""
+    # Use absolute paths since we cd into output_dir for compatibility with
+    # older versions of material_plots.py that don't have --outputDir.
+    scan_output = os.path.abspath(scan_output)
+    output_dir = os.path.abspath(output_dir)
     cmd = [
         "python", "utils/material_plots.py",
         "--fname", scan_output,
-        "--outputDir", output_dir,
         "--angleDef", "theta",
         "--angleBinning", str(params["binning"]),
         "--angleMin", str(params["min"]),
@@ -270,7 +273,7 @@ def run_material_plots(scan_output, output_dir, params):
     ]
 
     try:
-        subprocess.run(cmd, timeout=120, check=True)
+        subprocess.run(cmd, timeout=120, check=True, cwd=output_dir)
         return True
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
         return False
