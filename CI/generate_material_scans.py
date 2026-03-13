@@ -37,6 +37,11 @@ def parse_args():
         default="CI/config/geometry_list.yml",
         help="Geometry configuration file (default: CI/config/geometry_list.yml)",
     )
+    parser.add_argument(
+        "--skip-reference",
+        action="store_true",
+        help="Skip cloning and scanning the reference branch (useful for local testing)",
+    )
     return parser.parse_args()
 
 
@@ -135,7 +140,8 @@ def create_empty_histograms(output_dir, compact_name, error_message):
         empty_hist = ROOT.TH1F("empty_hist", f"FAILED SCAN: {error_message}", 100, 0, 180)
         empty_hist.SetTitle(f"{title} - SCAN FAILED: {compact_name}")
 
-        canvas = ROOT.TCanvas("canvas", "Material Budget", 800, 600)
+        canvas = ROOT.TCanvas(f"canvas_{hist_type}", "Material Budget", 800, 600)
+        ROOT.SetOwnership(canvas, False)
         stack = ROOT.THStack("stack", title)
         empty_hist.SetFillColor(ROOT.kRed)
         empty_hist.SetLineColor(ROOT.kRed)
@@ -174,8 +180,9 @@ def add_to_consolidated(input_dir, output_file, hist_prefix):
         canvas = None
         for key in infile.GetListOfKeys():
             obj = key.ReadObj()
-            if obj.IsA() == ROOT.TCanvas.Class():
+            if obj.IsA() is ROOT.TCanvas.Class():
                 canvas = obj
+                ROOT.SetOwnership(canvas, False)
                 break
 
         if not canvas:
@@ -219,7 +226,7 @@ def add_to_consolidated(input_dir, output_file, hist_prefix):
 
 
 def run_material_scan(xml_file, output_path, params, quiet):
-    """Run k4run material scan. Returns True on success."""
+    """Run k4run material scan. Returns True if the output file was produced."""
     cmd = [
         "k4run",
         "utils/material_scan.py",
@@ -236,17 +243,18 @@ def run_material_scan(xml_file, output_path, params, quiet):
     stderr = subprocess.DEVNULL if quiet else None
 
     try:
-        subprocess.run(cmd, timeout=300, check=True, stdout=stdout, stderr=stderr)
-        return True
+        subprocess.run(cmd, timeout=300, stdout=stdout, stderr=stderr)
     except subprocess.TimeoutExpired:
-        print(f"ERROR: Material scan timed out (>5min)")
+        print("ERROR: Material scan timed out (>5min)")
         return False
-    except subprocess.CalledProcessError as e:
-        code = e.returncode
-        reasons = {-11: "Segmentation fault", -6: "SIGABRT signal", -9: "SIGKILL signal"}
-        reason = reasons.get(code, f"Exit code {code}")
-        print(f"ERROR: Material scan failed: {reason}")
-        return False
+
+    # k4run may exit non-zero due to Gaudi finalization errors even when
+    # the scan data was produced successfully, so check for the output file.
+    if os.path.isfile(output_path):
+        return True
+
+    print("ERROR: Material scan failed — output file not produced")
+    return False
 
 
 def run_material_plots(scan_output, output_dir, params):
@@ -427,23 +435,26 @@ def main():
 
     print("=== Starting material histogram generation ===")
 
-    # Clone reference and generate reference histograms
-    clone_dir = clone_reference(target_repo, target_branch, args.quiet)
+    if not args.skip_reference:
+        # Clone reference and generate reference histograms
+        clone_dir = clone_reference(target_repo, target_branch, args.quiet)
 
-    original_dir = os.getcwd()
-    os.chdir(clone_dir)
-    process_geometries(".", os.path.join(original_dir, "detector_geometries_ref.root"), "_ref", args)
-    os.chdir(original_dir)
+        original_dir = os.getcwd()
+        os.chdir(clone_dir)
+        process_geometries(".", os.path.join(original_dir, "detector_geometries_ref.root"), "_ref", args)
+        os.chdir(original_dir)
 
     # Generate current branch histograms
     process_geometries(".", "detector_geometries_monitored.root", "", args)
 
     # Clean up
-    shutil.rmtree(clone_dir, ignore_errors=True)
+    if not args.skip_reference:
+        shutil.rmtree(clone_dir, ignore_errors=True)
 
     print("\n=== Material histogram generation completed ===")
     print("Consolidated files created:")
-    print("  - detector_geometries_ref.root")
+    if not args.skip_reference:
+        print("  - detector_geometries_ref.root")
     print("  - detector_geometries_monitored.root")
 
 
