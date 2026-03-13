@@ -422,6 +422,7 @@ def main():
     ROOT.gROOT.SetBatch(True)
 
     args = parse_args()
+    args.config = os.path.abspath(args.config)
     target_branch, target_repo = detect_comparison_target()
 
     print("=== Starting material histogram generation ===")
