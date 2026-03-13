@@ -53,7 +53,7 @@ jobs:
           # Create virtual environment for histcmp
           python -m venv /root/histcmp-venv
           source /root/histcmp-venv/bin/activate
-          pip install histcmp==0.8.1
+          pip install "mplhep<1.1" histcmp==0.8.1
           export PYTHONPATH=$VIRTUAL_ENV/lib/python3.$(python3 -c 'import sys; print(f"{sys.version_info[1]}")')/site-packages:$PYTHONPATH
           
           # Install PyYAML for config parsing

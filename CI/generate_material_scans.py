@@ -263,8 +263,10 @@ def run_material_plots(scan_output, output_dir, params):
     # older versions of material_plots.py that don't have --outputDir.
     scan_output = os.path.abspath(scan_output)
     output_dir = os.path.abspath(output_dir)
+    script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "utils", "material_plots.py")
     cmd = [
-        "python", "utils/material_plots.py",
+        "python", script_path,
         "--fname", scan_output,
         "--angleDef", "theta",
         "--angleBinning", str(params["binning"]),
