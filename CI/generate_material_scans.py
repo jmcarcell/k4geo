@@ -253,8 +253,8 @@ def run_material_plots(scan_output, output_dir, params):
     """Run material_plots.py to generate histograms. Returns True on success."""
     cmd = [
         "python", "utils/material_plots.py",
-        "-f", scan_output,
-        "-o", output_dir,
+        "--fname", scan_output,
+        "--outputDir", output_dir,
         "--angleDef", "theta",
         "--angleBinning", str(params["binning"]),
         "--angleMin", str(params["min"]),
