@@ -2,12 +2,12 @@
 
 geometries:
   # CLD geometries
-  - CLD/CLD_o2_v07
+  - FCCee/CLD/CLD_o2_v07
   
   # ALLEGRO geometries  
-  - ALLEGRO/ALLEGRO_o1_v03
+  - FCCee/ALLEGRO/ALLEGRO_o1_v03
   
   # IDEA geometries
-  - IDEA/IDEA_o1_v03
+  # - FCCee/IDEA/IDEA_o1_v03
   
   # Add more as needed based on codebase available geometries

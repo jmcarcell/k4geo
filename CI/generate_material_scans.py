@@ -3,10 +3,8 @@
 
 This script:
 1. Reads a YAML config listing detector geometries to scan
-2. Detects the comparison target (branch/repo) from environment or git
-3. Clones the reference branch
-4. Runs k4run material scans and generates plots for both branches
-5. Produces consolidated ROOT files for histcmp comparison
+2. Runs k4run material scans and generates plots for both a reference and current directory
+3. Produces consolidated ROOT files for histcmp comparison
 """
 
 import argparse
@@ -40,7 +38,12 @@ def parse_args():
     parser.add_argument(
         "--skip-reference",
         action="store_true",
-        help="Skip cloning and scanning the reference branch (useful for local testing)",
+        help="Skip reference scanning entirely",
+    )
+    parser.add_argument(
+        "--reference-dir",
+        default=None,
+        help="Path to an existing k4geo directory to use as reference (e.g. from cvmfs or local)",
     )
     return parser.parse_args()
 
@@ -65,61 +68,6 @@ def read_geometry_list(config_path):
         print(f"  - {geom}")
 
     return geometries
-
-
-def detect_comparison_target():
-    """Detect the branch and repo to compare against."""
-    print("=== Detecting comparison target ===")
-
-    base_ref = os.environ.get("GITHUB_BASE_REF", "")
-    repository = os.environ.get("GITHUB_REPOSITORY", "")
-
-    # Method 1: GitHub Actions environment
-    if base_ref and repository:
-        target_branch = base_ref
-        target_repo = f"https://github.com/{repository}.git"
-        print(f"Detected from GitHub Actions: {target_branch} @ {target_repo}")
-        return target_branch, target_repo
-
-    # Method 2: Git commands
-    try:
-        subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD"],
-            check=True,
-            capture_output=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Not in a git repository, using defaults")
-        return "main", "https://github.com/key4hep/k4geo.git"
-
-    try:
-        target_repo = (
-            subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            .stdout.strip()
-        )
-    except subprocess.CalledProcessError:
-        target_repo = "https://github.com/key4hep/k4geo.git"
-
-    try:
-        result = subprocess.run(
-            ["git", "ls-remote", "--symref", "origin", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        # Parse "ref: refs/heads/main\tHEAD"
-        first_line = result.stdout.splitlines()[0]
-        target_branch = first_line.split("refs/heads/")[-1].split("\t")[0]
-    except (subprocess.CalledProcessError, IndexError):
-        target_branch = "main"
-
-    print(f"Detected from git: {target_branch} @ {target_repo}")
-    return target_branch, target_repo
 
 
 def create_empty_histograms(output_dir, compact_name, error_message):
@@ -308,7 +256,7 @@ def process_geometries(source_dir, consolidated_file, file_suffix, args):
         geometry_name = os.path.dirname(geometry_path)
         compact_name = os.path.basename(geometry_path)
 
-        compact_dir = os.path.join(source_dir, "FCCee", geometry_name, "compact", compact_name)
+        compact_dir = os.path.join(source_dir, geometry_name, "compact", compact_name)
         xml_file = os.path.join(compact_dir, f"{compact_name}.xml")
 
         print(f"\nProcessing configured geometry: {geometry_path}")
@@ -389,46 +337,12 @@ def process_geometries(source_dir, consolidated_file, file_suffix, args):
                 f.write(f"- {failed}\n")
 
         print("Error summary saved to: material_scan_errors.md")
+
     else:
         print("All scans completed successfully!")
 
     print("==========================")
-
-
-def clone_reference(target_repo, target_branch, quiet):
-    """Clone the reference branch. Returns the clone directory path."""
-    clone_dir = "k4geo_main_ref"
-    print(f"\n=== Cloning comparison target ===")
-    print(f"Repository: {target_repo}")
-    print(f"Branch: {target_branch}")
-
-    stdout = subprocess.DEVNULL if quiet else None
-    stderr = subprocess.DEVNULL if quiet else None
-
-    try:
-        subprocess.run(
-            ["git", "clone", "--branch", target_branch, "--depth", "1", target_repo, clone_dir],
-            check=True,
-            stdout=stdout,
-            stderr=stderr,
-        )
-    except subprocess.CalledProcessError:
-        print(f"Failed to clone {target_branch} from {target_repo}, trying upstream main...")
-        try:
-            subprocess.run(
-                [
-                    "git", "clone", "--branch", "main", "--depth", "1",
-                    "https://github.com/key4hep/k4geo.git", clone_dir,
-                ],
-                check=True,
-                stdout=stdout,
-                stderr=stderr,
-            )
-        except subprocess.CalledProcessError:
-            print("FATAL: Could not clone any reference branch")
-            sys.exit(1)
-
-    return clone_dir
+    return failed_scans
 
 
 def main():
@@ -436,31 +350,38 @@ def main():
 
     args = parse_args()
     args.config = os.path.abspath(args.config)
-    target_branch, target_repo = detect_comparison_target()
 
     print("=== Starting material histogram generation ===")
 
     if not args.skip_reference:
-        # Clone reference and generate reference histograms
-        clone_dir = clone_reference(target_repo, target_branch, args.quiet)
+        reference_dir = args.reference_dir or os.environ.get("K4GEO", "")
+        if not reference_dir:
+            print("ERROR: --reference-dir or K4GEO environment variable is required unless --skip-reference is set")
+            sys.exit(1)
 
+        ref_dir = os.path.abspath(reference_dir)
+        if not os.path.isdir(ref_dir):
+            print(f"ERROR: Reference directory not found: {ref_dir}")
+            sys.exit(1)
+
+        print(f"\n=== Using reference directory: {ref_dir} ===")
         original_dir = os.getcwd()
-        os.chdir(clone_dir)
-        process_geometries(".", os.path.join(original_dir, "detector_geometries_ref.root"), "_ref", args)
+        os.chdir(ref_dir)
+        ref_failures = process_geometries(".", os.path.join(original_dir, "detector_geometries_ref.root"), "_ref", args)
         os.chdir(original_dir)
 
     # Generate current branch histograms
-    process_geometries(".", "detector_geometries_monitored.root", "", args)
-
-    # Clean up
-    if not args.skip_reference:
-        shutil.rmtree(clone_dir, ignore_errors=True)
+    cur_failures = process_geometries(".", "detector_geometries_monitored.root", "", args)
 
     print("\n=== Material histogram generation completed ===")
     print("Consolidated files created:")
     if not args.skip_reference:
-        print("  - detector_geometries_ref.root")
+        print(f"  - detector_geometries_ref.root (from {ref_dir})")
     print("  - detector_geometries_monitored.root")
+
+    all_failures = cur_failures + (ref_failures if not args.skip_reference else [])
+    if all_failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
