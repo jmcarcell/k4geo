@@ -1,4 +1,4 @@
-# lcgeo (Lepton Collider Geometry)
+ # lcgeo (Lepton Collider Geometry)
 [![DOI](https://zenodo.org/badge/60772160.svg)](https://doi.org/10.5281/zenodo.596333)
 [![Key4hep build](https://github.com/key4hep/k4geo/actions/workflows/key4hep-build.yaml/badge.svg)](https://github.com/key4hep/k4geo/actions/workflows/key4hep-build.yaml)
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/12359/badge.svg)](https://scan.coverity.com/projects/ilcsoft-lcgeo)
